@@ -1,41 +1,66 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { COUNTRIES } from '@shared/employeeOptions';
 import { api } from '../api/client';
 import { EmployeeForm } from '../components/EmployeeForm';
 import type { Employee, EmployeeInput } from '../types/employee';
 import { formatSalary } from '../utils/format';
 
+const SEARCH_DEBOUNCE_MS = 400;
+
 export function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Employee | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const hasLoadedOnce = useRef(false);
 
   const pageSize = 20;
 
+  // Debounce typing — API runs only after user pauses
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [countryFilter]);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasLoadedOnce.current) {
+      setLoading(true);
+    } else {
+      setIsSearching(true);
+    }
     setError('');
+
     try {
       const data = await api.listEmployees({
         page,
         pageSize,
-        search: search || undefined,
+        search: searchQuery || undefined,
         country: countryFilter || undefined,
       });
       setEmployees(data.items);
       setTotal(data.total);
+      hasLoadedOnce.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load employees');
     } finally {
       setLoading(false);
+      setIsSearching(false);
     }
-  }, [page, search, countryFilter]);
+  }, [page, searchQuery, countryFilter]);
 
   useEffect(() => {
     load();
@@ -84,19 +109,15 @@ export function EmployeesPage() {
       <div className="toolbar">
         <input
           placeholder="Search name, email, or title…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          aria-busy={isSearching}
         />
+        {isSearching && <span className="search-hint muted">Searching…</span>}
         <select
           aria-label="Filter by country"
           value={countryFilter}
-          onChange={(e) => {
-            setCountryFilter(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setCountryFilter(e.target.value)}
         >
           <option value="">All countries</option>
           {COUNTRIES.map((country) => (
@@ -123,7 +144,7 @@ export function EmployeesPage() {
       {loading ? (
         <p>Loading employees…</p>
       ) : (
-        <div className="table-wrap">
+        <div className={`table-wrap${isSearching ? ' is-loading' : ''}`}>
           <table>
             <thead>
               <tr>
@@ -169,7 +190,7 @@ export function EmployeesPage() {
 
       <div className="pagination">
         <button
-          disabled={page <= 1}
+          disabled={page <= 1 || isSearching}
           onClick={() => setPage((p) => p - 1)}
           className="btn-secondary"
         >
@@ -179,7 +200,7 @@ export function EmployeesPage() {
           Page {page} of {totalPages}
         </span>
         <button
-          disabled={page >= totalPages}
+          disabled={page >= totalPages || isSearching}
           onClick={() => setPage((p) => p + 1)}
           className="btn-secondary"
         >
